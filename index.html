@@ -97,7 +97,7 @@
       align-items: center;
       justify-content: center;
       gap: 12px;
-      height: 90px;
+      height: 95px;
     }
 
     .bar {
@@ -106,7 +106,7 @@
       background: #00f0ff;
       border-radius: 99px;
       box-shadow: 0 0 18px rgba(0, 240, 255, 0.6);
-      transition: height 0.08s ease, background 0.4s ease;
+      transition: height 0.06s ease-out, background 0.4s ease;
     }
 
     body.listening .bar {
@@ -168,31 +168,55 @@
     }
     scheduleBlink();
 
-    // อัปเดตปากตามระดับเสียงจริง
-    function startAudioLoop() {
-      const multipliers = [0.4, 0.75, 0.95, 1.0, 0.95, 0.75, 0.4];
+    function getVolumeSafe(fn) {
+      try {
+        if (!conversation || typeof fn !== 'function') return 0;
+        const val = fn.call(conversation);
+        return typeof val === 'number' && !Number.isNaN(val) ? val : 0;
+      } catch {
+        return 0;
+      }
+    }
 
-      function render() {
+    // อัปเดตปากตามระดับเสียงจริง + คลื่นสำรองตอนพูด
+    function startAudioLoop() {
+      if (audioAnimFrame) cancelAnimationFrame(audioAnimFrame);
+      const multipliers = [0.45, 0.75, 0.95, 1.0, 0.95, 0.75, 0.45];
+
+      function render(now) {
         if (!isConnected || !conversation) {
           bars.forEach(bar => (bar.style.height = '14px'));
           return;
         }
 
-        let volume = 0;
-        if (document.body.classList.contains('speaking') && conversation.getOutputVolume) {
-          volume = conversation.getOutputVolume();
-        } else if (conversation.getInputVolume) {
-          volume = conversation.getInputVolume() * 0.6;
+        const isSpeaking = document.body.classList.contains('speaking');
+        let level = 0;
+
+        if (isSpeaking) {
+          const outVol = getVolumeSafe(conversation.getOutputVolume);
+          // ขยายเกณฑ์เสียงออก และเสริมคลื่นจังหวะพูดหากค่าเสียงดิบต่ำเกินไป
+          const waveFallback =
+            (Math.sin(now * 0.018) * 0.5 + 0.5) * 0.45 +
+            (Math.sin(now * 0.037 + 1.2) * 0.5 + 0.5) * 0.25;
+          level = Math.max(Math.min(1, outVol * 4.5), waveFallback);
+        } else {
+          const inVol = getVolumeSafe(conversation.getInputVolume);
+          level = Math.min(0.45, inVol * 2.5);
         }
 
         bars.forEach((bar, index) => {
-          const dynamicHeight = Math.max(14, Math.min(85, 14 + volume * 130 * multipliers[index]));
+          const phaseOffset = Math.sin(now * 0.022 + index * 0.7) * 0.2 + 0.8;
+          const dynamicHeight = Math.max(
+            14,
+            Math.min(88, 14 + level * 74 * multipliers[index] * phaseOffset)
+          );
           bar.style.height = `${dynamicHeight}px`;
         });
 
         audioAnimFrame = requestAnimationFrame(render);
       }
-      render();
+
+      audioAnimFrame = requestAnimationFrame(render);
     }
 
     // แตะหน้าจอเพื่อเริ่มหรือจบการสนทนา
@@ -201,11 +225,15 @@
 
       // หากกำลังคุยอยู่ -> แตะเพื่อวางสาย
       if (isConnected && conversation) {
-        await conversation.endSession();
+        try {
+          await conversation.endSession();
+        } catch (e) {
+          console.error('End session error:', e);
+        }
         conversation = null;
         isConnected = false;
         document.body.className = '';
-        cancelAnimationFrame(audioAnimFrame);
+        if (audioAnimFrame) cancelAnimationFrame(audioAnimFrame);
         bars.forEach(bar => (bar.style.height = '14px'));
         return;
       }
@@ -229,7 +257,7 @@
             isConnected = false;
             isConnecting = false;
             document.body.className = '';
-            cancelAnimationFrame(audioAnimFrame);
+            if (audioAnimFrame) cancelAnimationFrame(audioAnimFrame);
             bars.forEach(bar => (bar.style.height = '14px'));
           },
           onModeChange: (mode) => {
