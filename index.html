@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>น้องสุวรรณ - AI Robot</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: radial-gradient(circle at center, #0d1522 0%, #05080e 100%);
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    /* โครงสร้างใบหน้าหุ่นยนต์ */
+    .robot-face {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 9vh;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.3s ease;
+    }
+
+    body:active .robot-face {
+      transform: scale(0.98);
+    }
+
+    /* ดวงตา */
+    .eyes-container {
+      display: flex;
+      gap: 16vw;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .eye {
+      width: 15vw;
+      height: 15vw;
+      max-width: 150px;
+      max-height: 150px;
+      min-width: 85px;
+      min-height: 85px;
+      border-radius: 32%;
+      background: #00f0ff;
+      box-shadow: 0 0 35px rgba(0, 240, 255, 0.7), inset 0 0 20px rgba(255, 255, 255, 0.8);
+      position: relative;
+      transition: background 0.4s ease, box-shadow 0.4s ease, transform 0.12s ease;
+      animation: floatEye 4s ease-in-out infinite;
+    }
+
+    /* แววตาด้านใน */
+    .eye::after {
+      content: '';
+      position: absolute;
+      top: 18%;
+      left: 20%;
+      width: 26%;
+      height: 26%;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+    }
+
+    /* กะพริบตา */
+    .eye.blink {
+      transform: scaleY(0.06);
+    }
+
+    /* สถานะสีตา */
+    body.listening .eye {
+      background: #00ff9d;
+      box-shadow: 0 0 45px rgba(0, 255, 157, 0.8), inset 0 0 20px rgba(255, 255, 255, 0.8);
+    }
+
+    body.speaking .eye {
+      background: #38bdf8;
+      box-shadow: 0 0 55px rgba(56, 189, 248, 0.95), inset 0 0 25px rgba(255, 255, 255, 0.9);
+    }
+
+    /* ปาก Waveform */
+    .mouth-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      height: 90px;
+    }
+
+    .bar {
+      width: 12px;
+      height: 14px;
+      background: #00f0ff;
+      border-radius: 99px;
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.6);
+      transition: height 0.08s ease, background 0.4s ease;
+    }
+
+    body.listening .bar {
+      background: #00ff9d;
+      box-shadow: 0 0 18px rgba(0, 255, 157, 0.6);
+    }
+
+    body.speaking .bar {
+      background: #38bdf8;
+      box-shadow: 0 0 24px rgba(56, 189, 248, 0.9);
+    }
+
+    @keyframes floatEye {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="robot-face" id="robotFace">
+    <div class="eyes-container">
+      <div class="eye" id="eyeLeft"></div>
+      <div class="eye" id="eyeRight"></div>
+    </div>
+    <div class="mouth-container" id="mouth">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { Conversation } from 'https://esm.sh/@elevenlabs/client';
+
+    const AGENT_ID = 'agent_7401m7z34qgce88vcxsje4mh74a8';
+    const eyes = [document.getElementById('eyeLeft'), document.getElementById('eyeRight')];
+    const bars = document.querySelectorAll('.bar');
+
+    let conversation = null;
+    let isConnected = false;
+    let isConnecting = false;
+    let audioAnimFrame = null;
+
+    // ระบบกะพริบตาอัตโนมัติ
+    function scheduleBlink() {
+      const nextBlink = Math.random() * 3500 + 2000;
+      setTimeout(() => {
+        eyes.forEach(eye => eye.classList.add('blink'));
+        setTimeout(() => {
+          eyes.forEach(eye => eye.classList.remove('blink'));
+          scheduleBlink();
+        }, 140);
+      }, nextBlink);
+    }
+    scheduleBlink();
+
+    // อัปเดตปากตามระดับเสียงจริง
+    function startAudioLoop() {
+      const multipliers = [0.4, 0.75, 0.95, 1.0, 0.95, 0.75, 0.4];
+
+      function render() {
+        if (!isConnected || !conversation) {
+          bars.forEach(bar => (bar.style.height = '14px'));
+          return;
+        }
+
+        let volume = 0;
+        if (document.body.classList.contains('speaking') && conversation.getOutputVolume) {
+          volume = conversation.getOutputVolume();
+        } else if (conversation.getInputVolume) {
+          volume = conversation.getInputVolume() * 0.6;
+        }
+
+        bars.forEach((bar, index) => {
+          const dynamicHeight = Math.max(14, Math.min(85, 14 + volume * 130 * multipliers[index]));
+          bar.style.height = `${dynamicHeight}px`;
+        });
+
+        audioAnimFrame = requestAnimationFrame(render);
+      }
+      render();
+    }
+
+    // แตะหน้าจอเพื่อเริ่มหรือจบการสนทนา
+    document.body.addEventListener('click', async () => {
+      if (isConnecting) return;
+
+      // หากกำลังคุยอยู่ -> แตะเพื่อวางสาย
+      if (isConnected && conversation) {
+        await conversation.endSession();
+        conversation = null;
+        isConnected = false;
+        document.body.className = '';
+        cancelAnimationFrame(audioAnimFrame);
+        bars.forEach(bar => (bar.style.height = '14px'));
+        return;
+      }
+
+      // หากยังไม่เริ่ม -> ขอสิทธิ์ไมค์และเริ่มสนทนา
+      try {
+        isConnecting = true;
+        document.body.className = 'listening';
+
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        conversation = await Conversation.startSession({
+          agentId: AGENT_ID,
+          onConnect: () => {
+            isConnected = true;
+            isConnecting = false;
+            document.body.className = 'listening';
+            startAudioLoop();
+          },
+          onDisconnect: () => {
+            isConnected = false;
+            isConnecting = false;
+            document.body.className = '';
+            cancelAnimationFrame(audioAnimFrame);
+            bars.forEach(bar => (bar.style.height = '14px'));
+          },
+          onModeChange: (mode) => {
+            if (!isConnected) return;
+            if (mode.mode === 'speaking') {
+              document.body.className = 'speaking';
+            } else {
+              document.body.className = 'listening';
+            }
+          },
+          onError: (err) => {
+            console.error('Conversation error:', err);
+            isConnected = false;
+            isConnecting = false;
+            document.body.className = '';
+          }
+        });
+      } catch (error) {
+        console.error('Start failed:', error);
+        isConnecting = false;
+        document.body.className = '';
+      }
+    });
+  </script>
+</body>
+</html>
